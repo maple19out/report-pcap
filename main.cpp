@@ -26,9 +26,9 @@ bool parse(Param* param, int argc, char* argv[]) {
     return true;
 }
 
-void print_ethernet(const u_char* frame) {
-    u_char* src = ((struct libnet_ethernet_hdr*)frame)->ether_shost;
-    u_char* dsc = ((struct libnet_ethernet_hdr*)frame)->ether_dhost;
+void print_ethernet(const libnet_ethernet_hdr* ether) {
+    const uint8_t* src = ether->ether_shost;
+    const uint8_t* dsc = ether->ether_dhost;
 
     printf("src mac : ");
     for(int i = 0; i < 5; i++)
@@ -41,20 +41,20 @@ void print_ethernet(const u_char* frame) {
     printf("%02x\n", dsc[5]);
 }
 
-void print_ip(const u_char* packet) {
-    const char* src_str = inet_ntoa(((struct libnet_ipv4_hdr*)packet)->ip_src);
+void print_ip(const struct libnet_ipv4_hdr* ip) {
+    const char* src_str = inet_ntoa(ip->ip_src);
     printf("src ip : %s\n", src_str);
 
-    const char* dst_str = inet_ntoa(((struct libnet_ipv4_hdr*)packet)->ip_dst);
+    const char* dst_str = inet_ntoa(ip->ip_dst);
     printf("dsc ip : %s\n", dst_str);
 }
 
-void print_tcp(const u_char* segment) {
-    printf("src port : %d\n", ntohs(((struct libnet_tcp_hdr*)segment)->th_sport));
-    printf("dst port : %d\n", ntohs(((struct libnet_tcp_hdr*)segment)->th_dport));
+void print_tcp(const struct libnet_tcp_hdr* tcp) {
+    printf("src port : %d\n", ntohs(tcp->th_sport));
+    printf("dst port : %d\n", ntohs(tcp->th_dport));
 }
 
-void print_payload(const u_char* start, const u_char* end) {
+void print_data(const u_char* start, const u_char* end) {
     printf("data : ");
     for(int i = 0; i < 8 && start + i <= end; i++)
         printf("%02x ", *(start + i));
@@ -74,7 +74,7 @@ int main(int argc, char *argv[]) {
 
     while (true) {
         struct pcap_pkthdr* header;
-        const u_char* packet;
+        const uint8_t* packet;
         int res = pcap_next_ex(pcap, &header, &packet);
         if (res == 0) continue;
         if (res == PCAP_ERROR || res == PCAP_ERROR_BREAK) {
@@ -82,24 +82,25 @@ int main(int argc, char *argv[]) {
             break;
         }
 
-        /*To Do*/
-        //check whether packet has ip header
-        if (((struct libnet_ethernet_hdr*)packet)->ether_type != htons(ETHERTYPE_IP))
+        /* check whether captured packet has IP header */
+        struct libnet_ethernet_hdr* ether = (struct libnet_ethernet_hdr*)packet;
+        if (ether->ether_type != htons(ETHERTYPE_IP))
             continue;
-        //check whether packet has TCP header
-        if (((struct libnet_ipv4_hdr*)(packet + sizeof(struct libnet_ethernet_hdr)))->ip_p != 6)
+        /* check whether captured packet has TCP header */
+        struct libnet_ipv4_hdr* ip = (struct libnet_ipv4_hdr*)((uint8_t*)ether + sizeof(struct libnet_ethernet_hdr));
+        if (ip->ip_p != 6)
             continue;
+        struct libnet_tcp_hdr* tcp = (struct libnet_tcp_hdr*)((uint8_t*)ip + ip->ip_hl * 4);
 
         printf("\n");
-        print_ethernet(packet);
-        print_ip(packet + sizeof(struct libnet_ethernet_hdr));
-        print_tcp(packet + sizeof(struct libnet_ethernet_hdr) + sizeof(struct libnet_ipv4_hdr));
-
-        u_char header_len = ((struct libnet_tcp_hdr*)(packet + sizeof(struct libnet_ethernet_hdr) + sizeof(struct libnet_ipv4_hdr)))->th_off * 4;
-        print_payload(packet + sizeof(struct libnet_ethernet_hdr) + sizeof(struct libnet_ipv4_hdr) + header_len, packet + header->caplen);
+        print_ethernet(ether);
+        print_ip(ip);
+        print_tcp(tcp);
+        uint8_t* data_start = (uint8_t*)tcp + tcp->th_off * 4;
+        uint8_t* data_end = (uint8_t*)packet + header->caplen;
+        print_data(data_start, data_end);
         printf("\n");
     }
-
     pcap_close(pcap);
 
     return 0;
